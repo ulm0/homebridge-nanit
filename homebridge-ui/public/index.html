@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nanit Camera Setup</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #333; }
+    .container { max-width: 480px; margin: 0 auto; padding: 24px; }
+    h2 { font-size: 20px; margin-bottom: 16px; color: #1a1a1a; }
+    p { font-size: 14px; color: #666; margin-bottom: 16px; line-height: 1.5; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #444; }
+    input[type="email"], input[type="password"], input[type="text"] {
+      width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px;
+      font-size: 14px; transition: border-color 0.2s;
+    }
+    input:focus { outline: none; border-color: #7c5cfc; }
+    .btn {
+      display: inline-block; padding: 10px 24px; border: none; border-radius: 8px;
+      font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+    }
+    .btn-primary { background: #7c5cfc; color: #fff; }
+    .btn-primary:hover { background: #6a4ce0; }
+    .btn-primary:disabled { background: #ccc; cursor: not-allowed; }
+    .alert { padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+    .alert-error { background: #fee; color: #c33; border: 1px solid #fcc; }
+    .alert-success { background: #efe; color: #363; border: 1px solid #cec; }
+    .alert-info { background: #eef; color: #336; border: 1px solid #cce; }
+    .step { display: none; }
+    .step.active { display: block; }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #fff;
+      border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite;
+      vertical-align: middle; margin-right: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status-badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .status-connected { background: #d4edda; color: #155724; }
+    .status-disconnected { background: #f8d7da; color: #721c24; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Status check -->
+    <div id="status-section" style="margin-bottom: 20px;">
+      <div id="auth-status"></div>
+    </div>
+
+    <!-- Step 1: Login -->
+    <div id="step-login" class="step active">
+      <h2>Connect your Nanit account</h2>
+      <p>Enter your Nanit account credentials to link your cameras with HomeKit.</p>
+      <div id="login-error"></div>
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Your Nanit password" autocomplete="current-password">
+      </div>
+      <button id="btn-login" class="btn btn-primary" onclick="doLogin()">Sign In</button>
+    </div>
+
+    <!-- Step 2: MFA -->
+    <div id="step-mfa" class="step">
+      <h2>Verification code</h2>
+      <p id="mfa-message">A verification code has been sent to your phone.</p>
+      <div id="mfa-error"></div>
+      <div class="form-group">
+        <label for="mfa-code">Enter the code</label>
+        <input type="text" id="mfa-code" placeholder="123456" autocomplete="one-time-code" maxlength="6">
+      </div>
+      <button id="btn-mfa" class="btn btn-primary" onclick="doMfa()">Verify</button>
+    </div>
+
+    <!-- Step 3: Success -->
+    <div id="step-success" class="step">
+      <div class="alert alert-success">
+        <strong>Connected!</strong> Your Nanit account has been linked successfully. Your cameras will appear in HomeKit after Homebridge restarts.
+      </div>
+      <p>You can close this window now. If you need to reconfigure, simply re-enter your credentials above.</p>
+    </div>
+  </div>
+
+  <script>
+    let mfaToken = '';
+    let savedEmail = '';
+    let savedPassword = '';
+
+    async function checkStatus() {
+      try {
+        const result = await homebridge.request('/auth/status');
+        const statusEl = document.getElementById('auth-status');
+        if (result.authenticated) {
+          statusEl.innerHTML = '<span class="status-badge status-connected">Authenticated</span>';
+        } else {
+          statusEl.innerHTML = '<span class="status-badge status-disconnected">Not connected</span>';
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    function showStep(stepId) {
+      document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
+      document.getElementById(stepId).classList.add('active');
+    }
+
+    function showError(containerId, message) {
+      document.getElementById(containerId).innerHTML =
+        `<div class="alert alert-error">${message}</div>`;
+    }
+
+    function clearError(containerId) {
+      document.getElementById(containerId).innerHTML = '';
+    }
+
+    function setLoading(btnId, loading) {
+      const btn = document.getElementById(btnId);
+      if (loading) {
+        btn.disabled = true;
+        btn.dataset.originalText = btn.textContent;
+        btn.innerHTML = '<span class="spinner"></span>Please wait...';
+      } else {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.originalText || 'Submit';
+      }
+    }
+
+    async function doLogin() {
+      clearError('login-error');
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!email || !password) {
+        showError('login-error', 'Please enter your email and password.');
+        return;
+      }
+
+      savedEmail = email;
+      savedPassword = password;
+      setLoading('btn-login', true);
+
+      try {
+        const result = await homebridge.request('/auth/login', { email, password });
+
+        if (!result.success) {
+          showError('login-error', result.error || 'Login failed');
+          return;
+        }
+
+        if (result.mfaRequired) {
+          mfaToken = result.mfaToken;
+          const suffix = result.phoneSuffix ? ` ending in ${result.phoneSuffix}` : '';
+          document.getElementById('mfa-message').textContent =
+            `A verification code has been sent to your phone${suffix}. Enter it below.`;
+          showStep('step-mfa');
+          document.getElementById('mfa-code').focus();
+        } else {
+          showStep('step-success');
+          checkStatus();
+        }
+      } catch (err) {
+        showError('login-error', err.message || 'Connection error');
+      } finally {
+        setLoading('btn-login', false);
+      }
+    }
+
+    async function doMfa() {
+      clearError('mfa-error');
+      const code = document.getElementById('mfa-code').value.trim();
+
+      if (!code) {
+        showError('mfa-error', 'Please enter the verification code.');
+        return;
+      }
+
+      setLoading('btn-mfa', true);
+
+      try {
+        const result = await homebridge.request('/auth/mfa', {
+          email: savedEmail,
+          password: savedPassword,
+          mfaToken,
+          mfaCode: code,
+        });
+
+        if (!result.success) {
+          showError('mfa-error', result.error || 'Verification failed');
+          return;
+        }
+
+        showStep('step-success');
+        checkStatus();
+      } catch (err) {
+        showError('mfa-error', err.message || 'Connection error');
+      } finally {
+        setLoading('btn-mfa', false);
+      }
+    }
+
+    // Enter key support
+    document.getElementById('password').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doLogin();
+    });
+    document.getElementById('mfa-code').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doMfa();
+    });
+
+    // Check status on load
+    checkStatus();
+  </script>
+</body>
+</html>

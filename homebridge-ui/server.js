@@ -1,0 +1,113 @@
+import { HomebridgePluginUiServer } from '@homebridge/plugin-ui-utils';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+
+const NANIT_API_BASE = 'https://api.nanit.com';
+
+class NanitUiServer extends HomebridgePluginUiServer {
+  constructor() {
+    super();
+
+    this.onRequest('/auth/login', this.handleLogin.bind(this));
+    this.onRequest('/auth/mfa', this.handleMfa.bind(this));
+    this.onRequest('/auth/status', this.handleStatus.bind(this));
+
+    this.ready();
+  }
+
+  async handleLogin(payload) {
+    const { email, password } = payload;
+
+    try {
+      const response = await fetch(`${NANIT_API_BASE}/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'nanit-api-version': '1',
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (response.status === 401) {
+        return { success: false, error: 'Invalid email or password' };
+      }
+
+      if (response.status === 482) {
+        const data = await response.json();
+        return {
+          success: true,
+          mfaRequired: true,
+          mfaToken: data.mfa_token,
+          phoneSuffix: data.phone_suffix || '',
+        };
+      }
+
+      if (response.status === 201) {
+        const data = await response.json();
+        await this.saveTokens(data.access_token, data.refresh_token);
+        return { success: true, mfaRequired: false };
+      }
+
+      return { success: false, error: `Unexpected response: ${response.status}` };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async handleMfa(payload) {
+    const { email, password, mfaToken, mfaCode } = payload;
+
+    try {
+      const response = await fetch(`${NANIT_API_BASE}/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'nanit-api-version': '1',
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          mfa_token: mfaToken,
+          mfa_code: mfaCode,
+        }),
+      });
+
+      if (response.status !== 201) {
+        const text = await response.text();
+        return { success: false, error: `MFA failed (${response.status}): ${text}` };
+      }
+
+      const data = await response.json();
+      await this.saveTokens(data.access_token, data.refresh_token);
+      return { success: true, refreshToken: data.refresh_token };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async handleStatus() {
+    try {
+      const tokenPath = join(this.homebridgeStoragePath, 'nanit-tokens.json');
+      const data = await readFile(tokenPath, 'utf-8');
+      const tokens = JSON.parse(data);
+      return {
+        authenticated: !!tokens.refreshToken,
+        hasAccessToken: !!tokens.accessToken,
+      };
+    } catch {
+      return { authenticated: false, hasAccessToken: false };
+    }
+  }
+
+  async saveTokens(accessToken, refreshToken) {
+    const tokenPath = join(this.homebridgeStoragePath, 'nanit-tokens.json');
+    await mkdir(this.homebridgeStoragePath, { recursive: true });
+    await writeFile(tokenPath, JSON.stringify({
+      accessToken,
+      refreshToken,
+      authTime: Date.now(),
+    }, null, 2), 'utf-8');
+  }
+}
+
+(() => new NanitUiServer())();

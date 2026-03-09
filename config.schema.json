@@ -1,0 +1,185 @@
+{
+  "pluginAlias": "NanitCamera",
+  "pluginType": "platform",
+  "singular": true,
+  "customUi": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Platform Name",
+        "type": "string",
+        "default": "Nanit Camera",
+        "required": true
+      },
+      "auth": {
+        "title": "Authentication",
+        "type": "object",
+        "properties": {
+          "refreshToken": {
+            "title": "Refresh Token",
+            "type": "string",
+            "description": "Manual refresh token (optional — use the setup wizard above instead). Only needed if the wizard is not available."
+          }
+        }
+      },
+      "streamMode": {
+        "title": "Streaming Mode",
+        "type": "string",
+        "default": "auto",
+        "oneOf": [
+          { "title": "Auto (local with cloud fallback)", "enum": ["auto"] },
+          { "title": "Local only (camera on LAN)", "enum": ["local"] },
+          { "title": "Cloud only (via Nanit servers)", "enum": ["cloud"] }
+        ],
+        "description": "How to stream video from the camera. 'Auto' tries local first and falls back to cloud."
+      },
+      "rtmpListenPort": {
+        "title": "RTMP Listen Port",
+        "type": "integer",
+        "description": "Port for the local RTMP server that receives the camera's stream push. Leave empty for auto-assign.",
+        "placeholder": "1935",
+        "condition": {
+          "functionBody": "return model.streamMode !== 'cloud';"
+        }
+      },
+      "cameras": {
+        "title": "Camera Configuration",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "babyUid": {
+              "title": "Baby UID",
+              "type": "string",
+              "description": "The Nanit baby UID (found in logs after first run). Leave empty to auto-detect."
+            },
+            "name": {
+              "title": "Display Name",
+              "type": "string",
+              "description": "Custom name for this camera in HomeKit."
+            },
+            "localIp": {
+              "title": "Camera Local IP",
+              "type": "string",
+              "description": "Local IP address of the Nanit camera (for local streaming mode).",
+              "format": "ipv4"
+            },
+            "enableLight": {
+              "title": "Enable Night Light Control",
+              "type": "boolean",
+              "default": true
+            },
+            "enableSound": {
+              "title": "Enable Sound Machine Control",
+              "type": "boolean",
+              "default": true
+            },
+            "enableSensors": {
+              "title": "Enable Temperature & Humidity Sensors",
+              "type": "boolean",
+              "default": true
+            }
+          }
+        }
+      },
+      "videoConfig": {
+        "title": "Video Configuration",
+        "type": "object",
+        "properties": {
+          "maxWidth": {
+            "title": "Max Width",
+            "type": "integer",
+            "default": 1280,
+            "minimum": 320,
+            "maximum": 1920
+          },
+          "maxHeight": {
+            "title": "Max Height",
+            "type": "integer",
+            "default": 720,
+            "minimum": 240,
+            "maximum": 1080
+          },
+          "maxFPS": {
+            "title": "Max FPS",
+            "type": "integer",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 30
+          },
+          "maxBitrate": {
+            "title": "Max Bitrate (kbps)",
+            "type": "integer",
+            "default": 2000,
+            "minimum": 100,
+            "maximum": 8000
+          },
+          "audio": {
+            "title": "Enable Audio",
+            "type": "boolean",
+            "default": true
+          },
+          "debug": {
+            "title": "Debug FFmpeg Output",
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    }
+  },
+  "layout": [
+    "name",
+    {
+      "type": "fieldset",
+      "title": "Streaming",
+      "items": [
+        "streamMode",
+        "rtmpListenPort"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Authentication (Advanced)",
+      "description": "Use the setup wizard above to authenticate. Only use this section if the wizard is not available.",
+      "expandable": true,
+      "items": [
+        "auth.refreshToken"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Camera Settings",
+      "expandable": true,
+      "items": [
+        {
+          "key": "cameras",
+          "type": "array",
+          "buttonText": "Add Camera Override",
+          "items": [
+            "cameras[].babyUid",
+            "cameras[].name",
+            "cameras[].localIp",
+            "cameras[].enableLight",
+            "cameras[].enableSound",
+            "cameras[].enableSensors"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Video Settings",
+      "expandable": true,
+      "items": [
+        "videoConfig.maxWidth",
+        "videoConfig.maxHeight",
+        "videoConfig.maxFPS",
+        "videoConfig.maxBitrate",
+        "videoConfig.audio",
+        "videoConfig.debug"
+      ]
+    }
+  ]
+}
