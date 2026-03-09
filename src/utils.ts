@@ -49,6 +49,10 @@ export class FfmpegProcess {
     return this.process?.stdin ?? null;
   }
 
+  get stdout() {
+    return this.process?.stdout ?? null;
+  }
+
   stop(): void {
     if (this.process && !this._killed) {
       this._killed = true;
