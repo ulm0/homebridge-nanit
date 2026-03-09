@@ -204,6 +204,10 @@ message GetLogs {
   required string url = 1;
 }
 
+message GetControl {
+  optional bool all = 1;
+}
+
 message GetStatus {
   optional bool all = 1;
 }
@@ -220,6 +224,7 @@ message Request {
   optional Control control = 15;
   optional Playback playback = 16;
   optional GetLogs getLogs = 18;
+  optional GetControl getControl = 19;
 }
 
 message Response {
@@ -230,6 +235,7 @@ message Response {
   optional Status status = 5;
   optional Settings settings = 6;
   repeated SensorData sensorData = 9;
+  optional Control control = 15;
 }
 
 message Message {

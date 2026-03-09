@@ -63,7 +63,7 @@ export class StreamResolver {
     babyUid: string,
     wsClient: NanitWebSocketClient,
   ): Promise<StreamInfo> {
-    const url = getCloudStreamUrl(this.api, babyUid);
+    const url = await getCloudStreamUrl(this.api, babyUid);
     this.log.debug(`Using cloud stream: ${url.replace(/\.[^.]+$/, '.<token>')}`);
 
     try {
@@ -130,6 +130,17 @@ export class StreamResolver {
 
   async stopStream(wsClient: NanitWebSocketClient): Promise<void> {
     await wsClient.stopStreaming();
+  }
+
+  /**
+   * Returns the local RTMP play URL for a baby if that stream is currently
+   * active on the local server, or null otherwise.
+   */
+  getActiveLocalPlayUrl(babyUid: string): string | null {
+    if (this.rtmpServer.isRunning && this.rtmpServer.isStreamActive(babyUid)) {
+      return this.rtmpServer.getLocalPlayUrl(babyUid);
+    }
+    return null;
   }
 
   private getLocalAddress(): string {

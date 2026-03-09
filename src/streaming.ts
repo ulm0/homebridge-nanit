@@ -22,7 +22,7 @@ import {
 } from 'homebridge';
 import { createSocket, type Socket } from 'node:dgram';
 import { pickPort } from 'pick-port';
-import { FfmpegProcess, findFfmpeg, detectAacEncoder } from './utils.js';
+import { FfmpegProcess, findFfmpeg, detectAacEncoder, captureSnapshot } from './utils.js';
 import type { StreamResolver } from './stream/resolver.js';
 import type { NanitWebSocketClient } from './nanit/websocket.js';
 import type { NanitApiClient } from './nanit/api.js';
@@ -128,13 +128,38 @@ export class NanitStreamingDelegate implements CameraStreamingDelegate {
   }
 
   async handleSnapshotRequest(request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
-    const snapshot = await this.nanitApi.getSnapshot(this.babyUid);
-    if (snapshot && snapshot.length > 0) {
-      this.cachedSnapshot = snapshot;
-      callback(undefined, snapshot);
-      return;
+    const width = request.width ?? this.maxWidth;
+    const height = request.height ?? this.maxHeight;
+
+    // 1. Try the Nanit REST snapshot endpoint
+    try {
+      const snapshot = await this.nanitApi.getSnapshot(this.babyUid);
+      if (snapshot && snapshot.length > 0) {
+        this.cachedSnapshot = snapshot;
+        callback(undefined, snapshot);
+        return;
+      }
+    } catch (err) {
+      this.log.warn(`[${this.cameraName}] Failed to fetch REST snapshot:`, err);
     }
 
+    // 2. Try capturing a frame from the live local RTMP stream
+    const localPlayUrl = this.streamResolver.getActiveLocalPlayUrl(this.babyUid);
+    if (localPlayUrl) {
+      this.log.debug(`[${this.cameraName}] REST snapshot unavailable, capturing frame from local stream`);
+      try {
+        const frame = await captureSnapshot(this.videoProcessor, localPlayUrl, width, height);
+        if (frame && frame.length > 0) {
+          this.cachedSnapshot = frame;
+          callback(undefined, frame);
+          return;
+        }
+      } catch (err) {
+        this.log.warn(`[${this.cameraName}] Failed to capture snapshot from local stream:`, err);
+      }
+    }
+
+    // 3. Return the last cached snapshot if available
     if (this.cachedSnapshot) {
       this.log.debug(`[${this.cameraName}] Using cached snapshot`);
       callback(undefined, this.cachedSnapshot);
@@ -233,62 +258,60 @@ export class NanitStreamingDelegate implements CameraStreamingDelegate {
 
     const isRtmp = streamInfo.url.startsWith('rtmp');
 
-    const ffmpegParts: string[] = [
-      `-hide_banner`,
-      `-loglevel level${this.debug ? '+verbose' : '+warning'}`,
+    const ffmpegArgs: string[] = [
+      '-hide_banner',
+      '-loglevel', `level${this.debug ? '+verbose' : '+warning'}`,
     ];
 
     if (isRtmp) {
-      ffmpegParts.push(
-        `-analyzeduration 5000000`,
-        `-probesize 5000000`,
-        `-rw_timeout 10000000`,
+      ffmpegArgs.push(
+        '-analyzeduration', '5000000',
+        '-probesize', '5000000',
+        '-rw_timeout', '10000000',
       );
     }
 
-    ffmpegParts.push(
-      `-i ${streamInfo.url}`,
-      `-map 0:v:0`,
-      `-codec:v ${vcodec}`,
-      `-pix_fmt yuv420p`,
-      `-color_range mpeg`,
-      `-preset ultrafast`,
-      `-tune zerolatency`,
-      `-r ${fps}`,
-      `-vf scale=${width}:${height}`,
-      `-b:v ${videoBitrate}k`,
-      `-bufsize ${videoBitrate * 2}k`,
-      `-maxrate ${videoBitrate}k`,
-      `-payload_type ${request.video.pt}`,
-      `-ssrc ${sessionInfo.videoSSRC}`,
-      `-f rtp`,
-      `-srtp_out_suite AES_CM_128_HMAC_SHA1_80`,
-      `-srtp_out_params ${sessionInfo.videoSRTP.toString('base64')}`,
+    ffmpegArgs.push(
+      '-i', streamInfo.url,
+      '-map', '0:v:0',
+      '-codec:v', vcodec,
+      '-pix_fmt', 'yuv420p',
+      '-color_range', 'mpeg',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-r', `${fps}`,
+      '-vf', `scale=${width}:${height}`,
+      '-b:v', `${videoBitrate}k`,
+      '-bufsize', `${videoBitrate * 2}k`,
+      '-maxrate', `${videoBitrate}k`,
+      '-payload_type', `${request.video.pt}`,
+      '-ssrc', `${sessionInfo.videoSSRC}`,
+      '-f', 'rtp',
+      '-srtp_out_suite', 'AES_CM_128_HMAC_SHA1_80',
+      '-srtp_out_params', sessionInfo.videoSRTP.toString('base64'),
       `srtp://${sessionInfo.address}:${sessionInfo.videoPort}?rtcpport=${sessionInfo.videoPort}&pkt_size=${mtu}`,
     );
 
     if (this.enableAudio) {
       const aacEncoder = detectAacEncoder(this.videoProcessor, this.log);
-      ffmpegParts.push(
-        `-map 0:a:0?`,
-        `-codec:a ${aacEncoder.codec}`,
+      ffmpegArgs.push(
+        '-map', '0:a:0?',
+        '-codec:a', aacEncoder.codec,
         ...aacEncoder.profileArgs,
-        `-flags +global_header`,
-        `-ar ${request.audio.sample_rate}k`,
-        `-b:a ${request.audio.max_bit_rate}k`,
-        `-ac ${request.audio.channel}`,
-        `-payload_type ${request.audio.pt}`,
-        `-ssrc ${sessionInfo.audioSSRC}`,
-        `-f rtp`,
-        `-srtp_out_suite AES_CM_128_HMAC_SHA1_80`,
-        `-srtp_out_params ${sessionInfo.audioSRTP.toString('base64')}`,
+        '-flags', '+global_header',
+        '-ar', `${request.audio.sample_rate}k`,
+        '-b:a', `${request.audio.max_bit_rate}k`,
+        '-ac', `${request.audio.channel}`,
+        '-payload_type', `${request.audio.pt}`,
+        '-ssrc', `${sessionInfo.audioSSRC}`,
+        '-f', 'rtp',
+        '-srtp_out_suite', 'AES_CM_128_HMAC_SHA1_80',
+        '-srtp_out_params', sessionInfo.audioSRTP.toString('base64'),
         `srtp://${sessionInfo.address}:${sessionInfo.audioPort}?rtcpport=${sessionInfo.audioPort}&pkt_size=188`,
       );
     }
 
-    ffmpegParts.push(`-progress pipe:1`);
-
-    const ffmpegArgs = ffmpegParts.join(' ');
+    ffmpegArgs.push('-progress', 'pipe:1');
 
     const activeSession: ActiveSession = {};
 

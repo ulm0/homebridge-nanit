@@ -31,6 +31,7 @@
     "dev": "npm uninstall -g homebridge-nanit && npm run build && npm i -g . && hb-service run --stdout"
   },
   "dependencies": {
+    "@homebridge/plugin-ui-utils": "^1.0.3",
     "class-validator": "^0.15.1",
     "node-media-server": "^2.7.1",
     "pick-port": "^2.1.0",
@@ -38,7 +39,6 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@homebridge/plugin-ui-utils": "^1.0.3",
     "@types/node": "^22.15.0",
     "@types/ws": "^8.18.0",
     "homebridge": "^1.11.2",

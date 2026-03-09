@@ -98,9 +98,8 @@ export class NanitApiClient {
     return data.token;
   }
 
-  getCloudStreamUrl(babyUid: string): string {
-    const token = this.auth.accessToken;
-    if (!token) throw new Error('Not authenticated');
+  async getCloudStreamUrl(babyUid: string): Promise<string> {
+    const token = await this.auth.ensureValidToken();
     return `rtmps://media-secured.nanit.com/nanit/${babyUid}.${token}`;
   }
 }

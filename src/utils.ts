@@ -12,11 +12,11 @@ export class FfmpegProcess {
     private readonly debug: boolean,
   ) {}
 
-  start(args: string, onClose?: (code: number | null) => void): ChildProcess {
-    this.log.debug(`[${this.name}] ffmpeg ${args}`);
+  start(args: string[], onClose?: (code: number | null) => void): ChildProcess {
+    const redacted = args.map((a, i) => (args[i - 1] === '-srtp_out_params' ? '<redacted>' : a));
+    this.log.debug(`[${this.name}] ffmpeg ${redacted.join(' ')}`);
 
-    const ffmpegArgs = args.split(/\s+/).filter(a => a.length > 0);
-    this.process = spawn(this.videoProcessor, ffmpegArgs, {
+    this.process = spawn(this.videoProcessor, args, {
       env: process.env,
     });
 
@@ -52,8 +52,13 @@ export class FfmpegProcess {
   stop(): void {
     if (this.process && !this._killed) {
       this._killed = true;
-      this.process.kill('SIGKILL');
+      const proc = this.process;
       this.process = null;
+      proc.kill('SIGTERM');
+      const forceKillTimer = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch { /* already dead */ }
+      }, 3_000);
+      proc.once('close', () => clearTimeout(forceKillTimer));
     }
   }
 
@@ -64,6 +69,66 @@ export class FfmpegProcess {
 
 export function findFfmpeg(): string {
   return process.env.FFMPEG_PATH || 'ffmpeg';
+}
+
+/**
+ * Capture a single JPEG frame from an RTMP stream using FFmpeg.
+ * Resolves with the JPEG buffer, or null if capture fails.
+ */
+export function captureSnapshot(
+  ffmpegPath: string,
+  rtmpUrl: string,
+  width: number,
+  height: number,
+  timeoutMs = 10_000,
+): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const args = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-analyzeduration', '2000000',
+      '-probesize', '2000000',
+      '-rw_timeout', '5000000',
+      '-i', rtmpUrl,
+      '-vframes', '1',
+      '-vf', `scale=${width}:${height}`,
+      '-f', 'image2',
+      '-vcodec', 'mjpeg',
+      'pipe:1',
+    ];
+
+    const chunks: Buffer[] = [];
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      proc.kill('SIGKILL');
+      resolve(null);
+    }, timeoutMs);
+
+    const proc = spawn(ffmpegPath, args);
+
+    proc.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0 && chunks.length > 0) {
+        resolve(Buffer.concat(chunks));
+      } else {
+        resolve(null);
+      }
+    });
+
+    proc.on('error', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
 }
 
 export interface AacEncoder {

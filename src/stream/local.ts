@@ -43,6 +43,10 @@ export class LocalRtmpServer {
 
     this.nms.on('prePublish', (...args: unknown[]) => {
       const streamPath = args[1] as string;
+      if (this.activeStreams.has(streamPath)) {
+        this.log.debug(`RTMP stream already tracked, ignoring duplicate prePublish: ${streamPath}`);
+        return;
+      }
       this.log.debug(`RTMP stream publishing: ${streamPath}`);
       this.activeStreams.add(streamPath);
       const waiters = this.streamWaiters.get(streamPath);
@@ -77,7 +81,11 @@ export class LocalRtmpServer {
     }
 
     return new Promise<boolean>((resolve) => {
+      let resolved = false;
+
       const timer = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
         const waiters = this.streamWaiters.get(streamPath);
         if (waiters) {
           const idx = waiters.indexOf(onReady);
@@ -88,6 +96,8 @@ export class LocalRtmpServer {
       }, timeoutMs);
 
       const onReady = () => {
+        if (resolved) return;
+        resolved = true;
         clearTimeout(timer);
         resolve(true);
       };
@@ -120,6 +130,6 @@ export class LocalRtmpServer {
     }
     this.streamWaiters.clear();
     this._isRunning = false;
-    this.log.debug('Local RTMP server stopped');
+    this.log.info('Local RTMP server stopped');
   }
 }

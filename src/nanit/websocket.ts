@@ -98,6 +98,8 @@ export class NanitWebSocketClient {
       } catch {
         this.log.info('Local connection failed, falling back to cloud');
       }
+    } else {
+      this.log.debug('No localIp configured, skipping local WebSocket connection');
     }
     await this.connect('cloud');
   }
@@ -264,6 +266,10 @@ export class NanitWebSocketClient {
     if (response.status) {
       this.processStatus(response.status as Record<string, unknown>);
     }
+
+    if (response.control) {
+      this.processControl(response.control as Record<string, unknown>);
+    }
   }
 
   private handleIncomingRequest(request: Record<string, unknown>): void {
@@ -321,10 +327,7 @@ export class NanitWebSocketClient {
 
   private processSettings(settings: Record<string, unknown>): void {
     if (settings.volume !== undefined) {
-      const volume = settings.volume as number;
-      this.emitStateChange({
-        nightLightBrightness: Math.round((volume / 100) * 100),
-      });
+      this.log.debug(`Camera volume setting: ${settings.volume}`);
     }
   }
 
@@ -386,9 +389,16 @@ export class NanitWebSocketClient {
     }
 
     try {
-      await this.sendRequest('GET_CONTROL', {});
+      this.sendRaw({
+        type: 'REQUEST',
+        request: {
+          id: ++this.requestId,
+          type: 'GET_CONTROL',
+          getControl: { all: true },
+        },
+      });
     } catch (err) {
-      this.log.debug('Failed to get initial control state:', err);
+      this.log.debug('Failed to request initial control state:', err);
     }
 
     try {
@@ -463,7 +473,8 @@ export class NanitWebSocketClient {
   }
 
   async startStreaming(rtmpUrl: string): Promise<void> {
-    this.log.info(`Requesting camera to stream to ${rtmpUrl}`);
+    const redactedUrl = rtmpUrl.replace(/(\.\w{8})\w+$/, '$1...<redacted>');
+    this.log.info(`Requesting camera to stream to ${redactedUrl}`);
     await this.sendRequest('PUT_STREAMING', {
       streaming: {
         id: 'MOBILE',
