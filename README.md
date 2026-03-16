@@ -29,7 +29,7 @@ Search for `homebridge-nanit` in the Homebridge UI plugin search and install.
 ### Via CLI
 
 ```bash
-npm install -g @ulm0/homebridge-nanit
+npm install -g homebridge-nanit-next
 ```
 
 ## Setup

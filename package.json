@@ -1,5 +1,5 @@
 {
-  "name": "@ulm0/homebridge-nanit",
+  "name": "homebridge-nanit-next",
   "displayName": "Nanit for Homebridge",
   "type": "module",
   "version": "1.0.0",
@@ -8,12 +8,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ulm0/homebridge-nanit.git"
+    "url": "git+https://github.com/ulm0/homebridge-nanit-next.git"
   },
   "bugs": {
-    "url": "https://github.com/ulm0/homebridge-nanit/issues"
+    "url": "https://github.com/ulm0/homebridge-nanit-next/issues"
   },
-  "homepage": "https://github.com/ulm0/homebridge-nanit#readme",
+  "homepage": "https://github.com/ulm0/homebridge-nanit-next#readme",
   "keywords": [
     "homebridge-plugin",
     "nanit",
