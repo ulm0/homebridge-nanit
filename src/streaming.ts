@@ -69,6 +69,7 @@ export class NanitStreamingDelegate implements CameraStreamingDelegate {
   private readonly maxBitrate: number;
   private readonly enableAudio: boolean;
   private readonly debug: boolean;
+  private talkbackEnabled = true;
 
   /** Set to a function that returns true if the HKSV prebuffer is active */
   isPrebufferActive: (() => boolean) | undefined;
@@ -378,6 +379,11 @@ export class NanitStreamingDelegate implements CameraStreamingDelegate {
     sessionInfo: SessionInfo,
     activeSession: ActiveSession,
   ): void {
+    if (!this.talkbackEnabled) {
+      this.log.debug(`[${this.cameraName}] Talk-back disabled after previous RTSP failure`);
+      return;
+    }
+
     const sampleRate = request.audio.sample_rate * 1000;
 
     this.log.info(
@@ -449,9 +455,11 @@ export class NanitStreamingDelegate implements CameraStreamingDelegate {
     );
     const proc = returnProcess.start(returnFfmpegArgs, (code) => {
       if (code !== 0 && code !== null) {
+        this.talkbackEnabled = false;
         this.log.warn(
           `[${this.cameraName}] Talk-back pipeline exited (code ${code}). ` +
-          `Camera at ${cameraLocalIp} may not support RTSP ANNOUNCE on port 554.`,
+          `Camera at ${cameraLocalIp} may not support RTSP ANNOUNCE on port 554. ` +
+          'Disabling talk-back for this process.',
         );
       } else {
         this.log.debug(`[${this.cameraName}] Talk-back FFmpeg exited with code ${code}`);
