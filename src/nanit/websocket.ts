@@ -23,6 +23,9 @@ export class NanitWebSocketClient {
   private keepAliveTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
+  private connectedAtMs = 0;
+  private localRapidDisconnects = 0;
+  private preferCloudUntilMs = 0;
   private requestId = 0;
   private pendingRequests = new Map<number, PendingRequest>();
   private stateListeners = new Set<CameraStateListener>();
@@ -89,6 +92,11 @@ export class NanitWebSocketClient {
     if (this.destroyed) return;
     await loadProto();
 
+    if (mode === 'local' && Date.now() < this.preferCloudUntilMs) {
+      this.log.warn('Temporarily preferring cloud WebSocket after repeated local disconnects');
+      mode = 'cloud';
+    }
+
     if (mode === 'local' && !this.localIp) {
       this.log.warn('Local WebSocket requested but no localIp configured — falling back to cloud');
       mode = 'cloud';
@@ -111,6 +119,11 @@ export class NanitWebSocketClient {
   }
 
   async connectAuto(): Promise<void> {
+    if (Date.now() < this.preferCloudUntilMs) {
+      await this.connect('cloud');
+      return;
+    }
+
     if (this.localIp) {
       try {
         await this.connect('local');
@@ -240,7 +253,11 @@ export class NanitWebSocketClient {
 
   private onConnected(): void {
     this._isConnected = true;
+    this.connectedAtMs = Date.now();
     this.reconnectAttempt = 0;
+    if (this.connectionMode === 'cloud') {
+      this.localRapidDisconnects = 0;
+    }
     this.log.info(`Nanit WebSocket connected (${this.connectionMode})`);
     this.emitStateChange({ isConnected: true });
     this.startKeepalive();
@@ -248,6 +265,21 @@ export class NanitWebSocketClient {
   }
 
   private onDisconnected(code: number, reason: string): void {
+    const connectedForMs = this.connectedAtMs > 0 ? Date.now() - this.connectedAtMs : 0;
+    if (this.connectionMode === 'local' && code === 1006 && connectedForMs > 0 && connectedForMs < 5_000) {
+      this.localRapidDisconnects++;
+      if (this.localRapidDisconnects >= 3) {
+        this.preferCloudUntilMs = Date.now() + 10 * 60_000;
+        this.connectionMode = 'cloud';
+        this.log.warn(
+          'Local WebSocket disconnected rapidly multiple times; '
+          + 'switching to cloud WebSocket control for 10 minutes.',
+        );
+      }
+    } else if (this.connectionMode === 'local' && code !== 1006) {
+      this.localRapidDisconnects = 0;
+    }
+
     this._isConnected = false;
     this.stopKeepalive();
     this.emitStateChange({ isConnected: false });
