@@ -12,7 +12,7 @@ export const NANIT_LOCAL_WS_PORT = 442;
 export const AUTH_TOKEN_LIFETIME_MS = 55 * 60 * 1000;
 export const WS_KEEPALIVE_INTERVAL_MS = 20_000;
 export const WS_RECONNECT_DELAYS = [5_000, 30_000, 120_000, 900_000];
-export const LOCAL_CONNECT_TIMEOUT_MS = 3_000;
+export const LOCAL_CONNECT_TIMEOUT_MS = 10_000;
 
 export const HKSV_PREBUFFER_MS = 8_000;
 export const HKSV_FRAGMENT_LENGTH_MS = 4_000;

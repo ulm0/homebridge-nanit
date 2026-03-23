@@ -191,8 +191,11 @@ export class NanitWebSocketClient {
     );
 
     return new Promise<void>((resolve, reject) => {
+      let settled = false;
       const timeout = setTimeout(() => {
-        reject(new Error('Local WebSocket connection timeout'));
+        if (settled) return;
+        settled = true;
+        reject(new Error(`Local WebSocket connection timeout after ${LOCAL_CONNECT_TIMEOUT_MS}ms`));
         this.ws?.close();
       }, LOCAL_CONNECT_TIMEOUT_MS);
 
@@ -204,17 +207,27 @@ export class NanitWebSocketClient {
       this.ws.binaryType = 'arraybuffer';
 
       this.ws.on('open', () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeout);
         this.onConnected();
         resolve();
       });
 
       this.ws.on('error', (err) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeout);
         reject(err);
       });
 
       this.ws.on('close', (code, reason) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          reject(new Error(`Local WebSocket closed before open (code=${code}, reason=${reason.toString()})`));
+          return;
+        }
         this.onDisconnected(code, reason.toString());
       });
 
