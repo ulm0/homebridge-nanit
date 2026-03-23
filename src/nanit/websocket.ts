@@ -85,11 +85,16 @@ export class NanitWebSocketClient {
     if (this.destroyed) return;
     await loadProto();
 
+    if (mode === 'local' && !this.localIp) {
+      this.log.warn('Local WebSocket requested but no localIp configured — falling back to cloud');
+      mode = 'cloud';
+    }
+
     this.connectionMode = mode;
     this.disconnect();
 
     try {
-      if (mode === 'local' && this.localIp) {
+      if (mode === 'local') {
         await this.connectLocal();
       } else {
         await this.connectCloud();
@@ -239,12 +244,24 @@ export class NanitWebSocketClient {
 
       if (type === 'KEEPALIVE') return;
 
+      this.log.debug(
+        `WS recv: type=${type} size=${data.length}b hex=${Buffer.from(data).toString('hex').slice(0, 80)}... `
+        + `keys=[${Object.keys(msg).join(',')}]`,
+      );
+
       if (type === 'RESPONSE') {
-        this.handleResponse(msg.response as Record<string, unknown>);
+        const resp = msg.response as Record<string, unknown>;
+        this.log.debug(
+          `WS response: requestId=${resp.requestId} requestType=${resp.requestType} `
+          + `statusCode=${resp.statusCode} keys=[${Object.keys(resp).join(',')}]`,
+        );
+        this.handleResponse(resp);
       }
 
       if (type === 'REQUEST') {
-        this.handleIncomingRequest(msg.request as Record<string, unknown>);
+        const req = msg.request as Record<string, unknown>;
+        this.log.debug(`WS incoming request: type=${req.type} keys=[${Object.keys(req).join(',')}]`);
+        this.handleIncomingRequest(req);
       }
     } catch (err) {
       this.log.error('Failed to decode WebSocket message:', err);
@@ -458,6 +475,7 @@ export class NanitWebSocketClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     try {
       const encoded = encodeMessage(obj);
+      this.log.debug(`WS raw send: ${encoded.length}b hex=${Buffer.from(encoded).toString('hex').slice(0, 80)}...`);
       this.ws.send(encoded);
     } catch (err) {
       this.log.error('Failed to send WebSocket message:', err);
@@ -483,6 +501,8 @@ export class NanitWebSocketClient {
       }, timeoutMs);
 
       this.pendingRequests.set(id, { resolve, reject, timer });
+
+      this.log.debug(`WS send: request id=${id} type=${type} pending=[${[...this.pendingRequests.keys()].join(',')}]`);
 
       this.sendRaw({
         type: 'REQUEST',
