@@ -139,8 +139,42 @@ export class NanitPlatform implements DynamicPlatformPlugin {
 
     await this.streamResolver.initialize();
 
+    const unmatchedConfigs = new Set(
+      (this.pluginConfig.cameras ?? []).filter(c => !c.babyUid),
+    );
+
     for (const baby of babies) {
-      const cameraConfig = this.pluginConfig.cameras?.find(c => c.babyUid === baby.uid);
+      let cameraConfig = this.pluginConfig.cameras?.find(c => c.babyUid === baby.uid);
+
+      if (!cameraConfig && unmatchedConfigs.size > 0) {
+        // Try matching by persisted IP: if a config entry has a localIp that
+        // matches what we previously discovered for this baby, bind them.
+        const persistedIp = this.discoveredCameraIps[baby.uid];
+        if (persistedIp) {
+          for (const candidate of unmatchedConfigs) {
+            if (candidate.localIp === persistedIp) {
+              cameraConfig = candidate;
+              unmatchedConfigs.delete(candidate);
+              break;
+            }
+          }
+        }
+
+        // Last resort: if there's exactly one unmatched config entry, use it.
+        if (!cameraConfig && unmatchedConfigs.size === 1) {
+          cameraConfig = [...unmatchedConfigs][0];
+          unmatchedConfigs.delete(cameraConfig);
+        }
+
+        if (cameraConfig) {
+          this.log.info(
+            `Auto-associated camera config (localIp=${cameraConfig.localIp ?? 'none'}) `
+            + `with baby "${baby.name ?? baby.uid}" (babyUid: ${baby.uid}). `
+            + 'Set babyUid in config to make this explicit.',
+          );
+        }
+      }
+
       const displayName = cameraConfig?.name ?? baby.name ?? `Nanit ${baby.uid.slice(0, 6)}`;
       let localIp = cameraConfig?.localIp ?? this.discoveredCameraIps[baby.uid];
 
