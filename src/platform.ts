@@ -7,6 +7,8 @@ import type {
   PlatformConfig,
   Service,
 } from 'homebridge';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 import type { NanitPlatformConfig, StreamMode } from './settings.js';
@@ -30,7 +32,10 @@ export class NanitPlatform implements DynamicPlatformPlugin {
   private readonly nanitApi: NanitApiClient;
   private readonly streamResolver: StreamResolver;
   private readonly wsClients = new Map<string, NanitWebSocketClient>();
+  private readonly wsClientsByBabyUid = new Map<string, NanitWebSocketClient>();
   private readonly pluginConfig: NanitPlatformConfig;
+  private readonly discoveredCameraIpsPath: string;
+  private discoveredCameraIps: Record<string, string> = {};
 
   constructor(
     public readonly log: Logging,
@@ -43,12 +48,18 @@ export class NanitPlatform implements DynamicPlatformPlugin {
 
     this.auth = new AuthManager(log, api.user.storagePath());
     this.nanitApi = new NanitApiClient(log, this.auth);
+    this.discoveredCameraIpsPath = join(api.user.storagePath(), 'nanit-cameras.json');
 
     const streamMode: StreamMode = this.pluginConfig.streamMode ?? 'auto';
     this.streamResolver = new StreamResolver(
       log,
       this.nanitApi,
       streamMode,
+      (babyUid, ip) => {
+        this.onCameraIpDiscovered(babyUid, ip).catch(err => {
+          this.log.debug('Failed to persist discovered camera IP:', err);
+        });
+      },
       this.pluginConfig.rtmpListenPort,
       this.pluginConfig.localAddress,
     );
@@ -78,6 +89,8 @@ export class NanitPlatform implements DynamicPlatformPlugin {
   }
 
   private async discoverDevices(): Promise<void> {
+    await this.loadDiscoveredCameraIps();
+
     this.log.info('Nanit: starting device discovery...');
 
     try {
@@ -129,7 +142,18 @@ export class NanitPlatform implements DynamicPlatformPlugin {
     for (const baby of babies) {
       const cameraConfig = this.pluginConfig.cameras?.find(c => c.babyUid === baby.uid);
       const displayName = cameraConfig?.name ?? baby.name ?? `Nanit ${baby.uid.slice(0, 6)}`;
-      const localIp = cameraConfig?.localIp;
+      let localIp = cameraConfig?.localIp ?? this.discoveredCameraIps[baby.uid];
+
+      if (!localIp) {
+        const hints = await this.nanitApi.getCameraLocalIpHints(baby.camera_uid);
+        if (hints.length > 0) {
+          localIp = hints[0];
+          this.log.info(`Cloud provided local IP hint for ${displayName}: ${localIp}`);
+          await this.onCameraIpDiscovered(baby.uid, localIp);
+        }
+      } else {
+        this.log.debug(`Using persisted/configured local IP for ${displayName}: ${localIp}`);
+      }
 
       const cameraInfo: CameraInfo = {
         babyUid: baby.uid,
@@ -153,6 +177,7 @@ export class NanitPlatform implements DynamicPlatformPlugin {
         localIp,
       );
       this.wsClients.set(baby.camera_uid, wsClient);
+      this.wsClientsByBabyUid.set(baby.uid, wsClient);
 
       const streamMode = this.pluginConfig.streamMode ?? 'auto';
       if (streamMode === 'auto') {
@@ -190,6 +215,51 @@ export class NanitPlatform implements DynamicPlatformPlugin {
       if (!this.discoveredUUIDs.includes(uuid)) {
         this.log.info('Removing stale accessory:', accessory.displayName);
         this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      }
+    }
+  }
+
+  private async loadDiscoveredCameraIps(): Promise<void> {
+    try {
+      const data = await readFile(this.discoveredCameraIpsPath, 'utf-8');
+      const parsed = JSON.parse(data) as Record<string, string>;
+      this.discoveredCameraIps = parsed ?? {};
+      const count = Object.keys(this.discoveredCameraIps).length;
+      if (count > 0) {
+        this.log.info(`Loaded ${count} persisted camera local IP mapping(s)`);
+      }
+    } catch {
+      this.discoveredCameraIps = {};
+    }
+  }
+
+  private async saveDiscoveredCameraIps(): Promise<void> {
+    await mkdir(this.api.user.storagePath(), { recursive: true });
+    await writeFile(this.discoveredCameraIpsPath, JSON.stringify(this.discoveredCameraIps, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
+  }
+
+  private async onCameraIpDiscovered(babyUid: string, ip: string): Promise<void> {
+    const prev = this.discoveredCameraIps[babyUid];
+    if (prev === ip) return;
+
+    this.discoveredCameraIps[babyUid] = ip;
+    this.streamResolver.addAllowedCameraIp(ip);
+    await this.saveDiscoveredCameraIps();
+
+    this.log.info(`Discovered camera local IP for ${babyUid}: ${ip}`);
+
+    const wsClient = this.wsClientsByBabyUid.get(babyUid);
+    const streamMode: StreamMode = this.pluginConfig.streamMode ?? 'auto';
+    if (wsClient) {
+      wsClient.setCameraLocalIp(ip);
+      // In auto mode, prefer switching to local WS once the camera IP is known.
+      if (streamMode === 'auto') {
+        wsClient.connectAuto().catch(err => {
+          this.log.debug('Failed to re-negotiate local WebSocket after IP discovery:', err);
+        });
       }
     }
   }

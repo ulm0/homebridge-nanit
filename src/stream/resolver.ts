@@ -24,6 +24,7 @@ export class StreamResolver {
     private readonly log: Logging,
     private readonly api: NanitApiClient,
     private readonly mode: StreamMode,
+    private readonly onCameraIpDiscovered?: (babyUid: string, ip: string) => void,
     rtmpPort?: number,
     localAddress?: string,
   ) {
@@ -59,13 +60,11 @@ export class StreamResolver {
       return this.serializedGetLocalStream(babyUid, wsClient);
     }
 
-    // auto mode: try local first, fall back to cloud
-    if (wsClient.isConnected) {
-      try {
-        return await this.serializedGetLocalStream(babyUid, wsClient);
-      } catch (err) {
-        this.log.warn('Local stream failed, falling back to cloud:', err);
-      }
+    // auto mode: always try local first, fall back to cloud
+    try {
+      return await this.serializedGetLocalStream(babyUid, wsClient);
+    } catch (err) {
+      this.log.warn('Local stream failed, falling back to cloud:', err);
     }
 
     return this.getCloudStream(babyUid, wsClient);
@@ -189,6 +188,11 @@ export class StreamResolver {
       if (!ready) {
         throw new Error('Camera did not start publishing after all retry attempts');
       }
+    }
+
+    const publisherIp = this.rtmpServer.getPublisherIp(streamKey);
+    if (publisherIp) {
+      this.onCameraIpDiscovered?.(babyUid, publisherIp);
     }
 
     const playUrl = this.rtmpServer.getLocalPlayUrl(streamKey);

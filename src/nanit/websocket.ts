@@ -45,7 +45,7 @@ export class NanitWebSocketClient {
     private readonly auth: AuthManager,
     private readonly api: NanitApiClient,
     private readonly cameraUid: string,
-    private readonly localIp?: string,
+    private localIp?: string,
   ) {}
 
   get isConnected(): boolean {
@@ -58,6 +58,10 @@ export class NanitWebSocketClient {
 
   get cameraLocalIp(): string | undefined {
     return this.localIp;
+  }
+
+  setCameraLocalIp(ip: string): void {
+    this.localIp = ip;
   }
 
   onStateChange(listener: CameraStateListener): () => void {
@@ -102,6 +106,7 @@ export class NanitWebSocketClient {
     } catch (err) {
       this.log.error(`WebSocket ${mode} connection failed:`, err);
       this.scheduleReconnect();
+      throw err;
     }
   }
 
@@ -109,14 +114,23 @@ export class NanitWebSocketClient {
     if (this.localIp) {
       try {
         await this.connect('local');
+        await this.sendRequest('GET_STATUS', { getStatus: { all: true } }, 5_000);
+        this.log.info('Validated local WebSocket with status round-trip');
         return;
-      } catch {
-        this.log.info('Local connection failed, falling back to cloud');
+      } catch (err) {
+        this.log.info('Local connection validation failed, falling back to cloud');
+        this.disconnect();
+        this.log.debug('Local validation error:', err);
       }
     } else {
-      this.log.debug('No localIp configured, skipping local WebSocket connection');
+      this.log.debug('No localIp configured, skipping local WebSocket validation');
     }
-    await this.connect('cloud');
+    try {
+      await this.connect('cloud');
+    } catch (err) {
+      this.scheduleReconnect();
+      throw err;
+    }
   }
 
   private async connectCloud(): Promise<void> {
@@ -244,24 +258,12 @@ export class NanitWebSocketClient {
 
       if (type === 'KEEPALIVE') return;
 
-      this.log.debug(
-        `WS recv: type=${type} size=${data.length}b hex=${Buffer.from(data).toString('hex').slice(0, 80)}... `
-        + `keys=[${Object.keys(msg).join(',')}]`,
-      );
-
       if (type === 'RESPONSE') {
-        const resp = msg.response as Record<string, unknown>;
-        this.log.debug(
-          `WS response: requestId=${resp.requestId} requestType=${resp.requestType} `
-          + `statusCode=${resp.statusCode} keys=[${Object.keys(resp).join(',')}]`,
-        );
-        this.handleResponse(resp);
+        this.handleResponse(msg.response as Record<string, unknown>);
       }
 
       if (type === 'REQUEST') {
-        const req = msg.request as Record<string, unknown>;
-        this.log.debug(`WS incoming request: type=${req.type} keys=[${Object.keys(req).join(',')}]`);
-        this.handleIncomingRequest(req);
+        this.handleIncomingRequest(msg.request as Record<string, unknown>);
       }
     } catch (err) {
       this.log.error('Failed to decode WebSocket message:', err);
@@ -475,7 +477,6 @@ export class NanitWebSocketClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     try {
       const encoded = encodeMessage(obj);
-      this.log.debug(`WS raw send: ${encoded.length}b hex=${Buffer.from(encoded).toString('hex').slice(0, 80)}...`);
       this.ws.send(encoded);
     } catch (err) {
       this.log.error('Failed to send WebSocket message:', err);
@@ -501,8 +502,6 @@ export class NanitWebSocketClient {
       }, timeoutMs);
 
       this.pendingRequests.set(id, { resolve, reject, timer });
-
-      this.log.debug(`WS send: request id=${id} type=${type} pending=[${[...this.pendingRequests.keys()].join(',')}]`);
 
       this.sendRaw({
         type: 'REQUEST',

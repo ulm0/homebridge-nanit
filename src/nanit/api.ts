@@ -98,6 +98,55 @@ export class NanitApiClient {
     return data.token;
   }
 
+  /**
+   * Best-effort cloud lookup for camera local IP hints.
+   * Nanit API responses vary by firmware/account, so this method tries
+   * a few known endpoint patterns and extracts common IP-like fields.
+   */
+  async getCameraLocalIpHints(cameraUid: string): Promise<string[]> {
+    const candidatePaths = [
+      `/focus/cameras/${cameraUid}`,
+      `/focus/cameras/${cameraUid}/status`,
+      `/focus/cameras/${cameraUid}/settings`,
+    ];
+
+    const hints = new Set<string>();
+
+    for (const path of candidatePaths) {
+      try {
+        const payload = await this.fetchAuthorized<unknown>(path);
+        this.collectIpv4Strings(payload, hints);
+      } catch {
+        // Best effort: ignore unsupported endpoints.
+      }
+    }
+
+    return [...hints];
+  }
+
+  private collectIpv4Strings(value: unknown, out: Set<string>): void {
+    if (typeof value === 'string') {
+      if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(value)) {
+        const parts = value.split('.').map(Number);
+        if (parts.every(n => Number.isInteger(n) && n >= 0 && n <= 255)) {
+          out.add(value);
+        }
+      }
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) this.collectIpv4Strings(item, out);
+      return;
+    }
+
+    if (value && typeof value === 'object') {
+      for (const v of Object.values(value as Record<string, unknown>)) {
+        this.collectIpv4Strings(v, out);
+      }
+    }
+  }
+
   async getCloudStreamUrl(babyUid: string): Promise<string> {
     const token = await this.auth.ensureValidToken();
     return `rtmps://media-secured.nanit.com/nanit/${babyUid}.${token}`;
